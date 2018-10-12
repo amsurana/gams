@@ -9,8 +9,13 @@
 #include <string>
 #include <fstream>
 
+#include "boost/filesystem.hpp"
+#include "yaml-cpp/yaml.h"
+
+
 #include "madara/logger/GlobalLogger.h"
 #include "madara/knowledge/KnowledgeBase.h"
+#include "madara/knowledge/CheckpointStreamer.h"
 #include "madara/knowledge/containers/NativeDoubleVector.h"
 #include "madara/knowledge/containers/NativeIntegerVector.h"
 #include "madara/knowledge/containers/Double.h"
@@ -55,13 +60,10 @@
 #include <tf2_msgs/TFMessage.h>
 #include <std_msgs/String.h>
 
+
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
-
-
-#include "boost/date_time/posix_time/posix_time.hpp"
-#include <boost/foreach.hpp>
 
 namespace logger = madara::logger;
 namespace knowledge = madara::knowledge;
@@ -77,14 +79,28 @@ std::string rosbag_path = "";
 //std::string rosbag_robot_prefix = "robot_";
 
 // prefix for the madara checkoints
-std::string checkpoint_prefix = "checkpoint_";
+std::string checkpoint_prefix = "checkpoint";
 
 // path to the filter definition file
 std::string map_file = "";
 
+//path to the checkpoint stream file
+std::string stream_file = "";
+
+//path to the manifest file
+std::string manifest_file = "";
+
 // save as a karl or binary file
-bool save_as_karl = true;
+bool save_as_karl = false;
 bool save_as_json = false;
+bool save_as_binary = false;
+bool save_as_stream = false;
+
+//Metadata in the checkpoints
+bool store_metadata = false;
+
+//Buffer size
+int write_buffer_size = 1024*1024*100;
 
 // the world and the base frame of the robot
 std::string base_frame = "";
@@ -95,10 +111,14 @@ int checkpoint_frequency = 0;
 
 // Differential checkpointing
 bool differential_checkpoints = false;
+bool same_file = false;
+
+// Delete existing files
+bool delete_existing = false;
 
 
-
-
+//Function definitions
+void delete_existing_file(std::string path, bool delete_existing);
 int save_checkpoint (knowledge::KnowledgeBase *knowledge,
   knowledge::CheckpointSettings *settings, std::string meta_prefix="meta");
 std::string get_agent_var_prefix (std::string ros_topic_name);
@@ -122,9 +142,33 @@ void handle_arguments (int argc, char ** argv)
       checkpoint_prefix = argv[i + 1];
       i++;
     }
+    else if (arg1 == "-meta")
+    {
+      store_metadata = true;
+    }
     else if (arg1 == "-m" || arg1 == "--map-file")
     {
-      map_file = argv[i + 1];
+      if (i + 1 < argc)
+      {
+        map_file = argv[i + 1];
+      }
+      i++;
+    }
+    else if (arg1 == "-stk" || arg1 == "--stream")
+    {
+      if (i + 1 < argc)
+      {
+        stream_file = argv[i + 1];
+        save_as_stream = true;
+      }
+      i++;
+    }
+    else if (arg1 == "-mp" || arg1 == "--manifest-path")
+    {
+      if (i + 1 < argc)
+      {
+        manifest_file = argv[i + 1];
+      }
       i++;
     }
     else if (arg1 == "-rp" || arg1 == "--ros-robot-prefix")
@@ -134,27 +178,42 @@ void handle_arguments (int argc, char ** argv)
     }
     else if (arg1 == "-sb" || arg1 == "--save-binary")
     {
-      save_as_karl = false;
-      save_as_json = false;
+      save_as_binary = true;
     }
     else if (arg1 == "-sj" || arg1 == "--save-json")
     {
-      save_as_karl = false;
       save_as_json = true;
     }
     else if (arg1 == "-sk" || arg1 == "--save-karl")
     {
       save_as_karl = true;
-      save_as_json = false;
     }
     else if (arg1 == "-d" || arg1 == "--differential")
     {
       differential_checkpoints = true;
     }
+    else if (arg1 == "-c" || arg1 == "--continuous")
+    {
+      differential_checkpoints = true;
+      same_file = true;
+    }
+    else if (arg1 == "-de" || arg1 == "--delete-existing")
+    {
+      delete_existing = true;
+    }
     else if (arg1 == "-y" || arg1 == "--frequency")
     {
       checkpoint_frequency = std::stoi(argv[i + 1]);
       i++;
+    }
+    else if (arg1 == "-ss" || arg1 == "--save-size")
+    {
+      if (i + 1 < argc)
+      {
+        std::stringstream buffer (argv[i + 1]);
+        buffer >> write_buffer_size;
+      }
+      ++i;
     }
     else if (arg1 == "-h" || arg1 == "--help")
     {
@@ -173,13 +232,26 @@ void handle_arguments (int argc, char ** argv)
       "                                       base as a karl checkpoint"\
                                               "(default)\n" \
       "  [-m|--map-file file]                 File with filter information\n" \
+      "  [-meta]                              stores metadata in the checkpoints\n" \
+      "  [-mp|--manifest-path file]           path to the manifest file\n" \
       "  [-y|--frequency hz]                  Checkpoint frequency\n" \
       "                                       (default:checkpoint with each\n" \
       "                                        message in the bagfile)\n" \
       "  [-d|--differential]                  differential checkpoints\n" \
-      "                                       only for binary checkpoints\n";
+      "                                       only for binary checkpoints\n" \
+      "  [-c|--continuous]                    differential checkpoints\n" \
+      "                                       continuously stored in the same \n" \
+      "                                       file - only for binary checkpoints\n" \
+      "  [-ss|--save-size bytes]              size of buffer needed for file saves\n" \
+      "  [-stk|--stream file]                 stream checkpoints to file\n"\
+      "  [-de|--delete-existing]              delete existing output files\n";
       exit (0);
     }
+  }
+  if ( !save_as_binary && !save_as_json && !save_as_karl && !save_as_stream)
+  {
+    // if no output format is selected -> save in karl format
+    save_as_karl = true;
   }
 }
 
@@ -198,49 +270,98 @@ int main (int argc, char ** argv)
   // Read the bag
   rosbag::Bag bag;
   bag.open (rosbag_path, rosbag::bagmode::Read);
-
+  
   rosbag::View view;
   std::map<std::string,std::string> topic_map;
+  std::vector<std::string> schema_files;
+  std::map<std::string, std::string> schema_map;
+  std::map<std::string, int> circular_variables;
+  std::map<std::string, std::map<std::string, std::string>> name_substitution_map;
+  std::string default_frame_prefix = ".gams.frames";
+
 
   // Use mapfile to filter topics
   if (map_file != "")
   {
     std::vector<std::string> selected_topics;
-    std::string line;
-    std::ifstream myfile (map_file);
-    if (myfile.is_open ())
+
+    YAML::Node config = YAML::LoadFile(map_file);
+    if (config["frames"])
     {
-      while ( getline (myfile, line) )
+      if (config["frames"]["default_frame_prefix"])
       {
-        int ros_topic_end = line.find (" ");
-        //split the line in topic name and madara var name
-        std::string topic_name = line.substr (0, ros_topic_end);
-        std::string var_name = line.substr (ros_topic_end+1);
-        if (topic_name == "base_frame:")
-        {
-          // definition of the base_frame
-          base_frame = var_name;
-              std::replace ( base_frame.begin (), base_frame.end (), '/', '_');
-
-          std::cout << "Base frame: " << base_frame << std::endl;
-        }
-        else if (topic_name == "world_frame:")
-        {
-          // definition of the world_frame
-          world_frame = var_name;
-          std::replace (
-            world_frame.begin (), world_frame.end (), '/', '_');
-
-          std::cout << "World frame: " << world_frame << std::endl;
-        }
-        else
-        {
-          selected_topics.push_back (topic_name);
-          topic_map[topic_name] = var_name;
-        }
+        default_frame_prefix = config["frames"]["default_frame_prefix"].as<std::string>();
+        // set the default reference frame prefix to be global
+        gams::pose::FrameEvalSettings::set_default_prefix(default_frame_prefix);
       }
-      myfile.close ();
+
+      base_frame = config["frames"]["base_frame"].as<std::string>();
+      world_frame = config["frames"]["world_frame"].as<std::string>();
+      std::replace ( base_frame.begin (), base_frame.end (), '/', '_');
+      std::replace ( world_frame.begin (), world_frame.end (), '/', '_');
+      std::cout << "Base frame: " << base_frame << std::endl;
+      std::cout << "World frame: " << world_frame << std::endl;
     }
+    if (config["topics"])
+    {
+      for(YAML::const_iterator it=config["topics"].begin();
+          it!=config["topics"].end(); ++it)
+      {
+        
+        std::string topic_name = it->first.as<std::string>();
+        std::string var_name = it->second["name"].as<std::string>();
+        if (it->second["circular_buffer_size"])
+        {
+          // This variable will be a circular buffer
+          circular_variables[var_name] =
+            it->second["circular_buffer_size"].as<int>();
+        }
+
+        selected_topics.push_back (topic_name);
+        topic_map[topic_name] = var_name;
+      }
+    }
+
+    // the schema files
+    if (config["capnp_schemas"])
+    {
+      for (YAML::const_iterator it=config["capnp_schemas"].begin();
+           it!=config["capnp_schemas"].end();++it)
+      {
+        schema_files.push_back(it->as<std::string>());
+      }
+    }
+
+    // capnproto schema mappings
+    if (config["schema_map"])
+    {
+      for(YAML::const_iterator it=config["schema_map"].begin();
+          it!=config["schema_map"].end(); ++it)
+      {
+        std::string ros_type = it->first.as<std::string>();
+        std::string schema_name = 
+          gams::utility::ros::cleanCapnpSchemaName(it->second.as<std::string>());
+        schema_map[ros_type] = schema_name;
+      }
+    }
+
+    // simple renameing of message members
+    if (config["name_substitution"])
+    {
+      for(YAML::const_iterator type_it=config["name_substitution"].begin();
+          type_it!=config["name_substitution"].end(); ++type_it)
+      {
+        std::string ros_type = type_it->first.as<std::string>();
+        std::map<std::string, std::string> subst;
+        for(YAML::const_iterator elem_it=type_it->second.begin();
+                  elem_it!=type_it->second.end(); ++elem_it)
+        {
+          subst[elem_it->first.as<std::string>()] = elem_it->second.as<std::string>();
+        }
+        name_substitution_map[ros_type] = subst;
+      }
+    }
+
     rosbag::TopicQuery topics (selected_topics);
     view.addQuery (bag, topics);
   }
@@ -276,9 +397,10 @@ int main (int argc, char ** argv)
     ++i;
   }
 
-  //Prepare the parser to be able to introspect unknown types
+  gams::utility::ros::RosParser parser(&kb, world_frame, base_frame,
+    schema_map, circular_variables);
 
-  gams::utility::ros::RosParser parser(&kb, world_frame, base_frame);
+  // Register ros message types to prepare the parser's introspection features
   for (const rosbag::ConnectionInfo* connection: view.getConnections () )
   {
     const std::string  topic_name =  connection->topic;
@@ -289,12 +411,21 @@ int main (int argc, char ** argv)
       RosIntrospection::ROSType (datatype), definition);
   }
 
+  parser.register_rename_rules(name_substitution_map);
+
+  // Load the capnproto schemas
+  for (std::string path : schema_files)
+  {
+    parser.load_capn_schema(madara::utility::expand_envs(path));
+  }
+  parser.print_schemas();
+
   // Iterate the messages
   settings.initial_lamport_clock = 0;
   settings.last_lamport_clock = 0;
   settings.override_lamport = true;
   settings.override_timestamp = true;
-  settings.buffer_size = 10240000;
+  settings.buffer_size = write_buffer_size;
 
   uint64_t last_checkpoint_timestamp = 0;
 
@@ -308,8 +439,26 @@ int main (int argc, char ** argv)
       (checkpoint_intervall / 1000 / 1000) << " milliseconds." << std::endl;
   }
 
+  // Attach streaming
+
+  madara::knowledge::CheckpointSettings stream_settings;
+  if (save_as_stream)
+  {
+    stream_settings.filename = stream_file + ".stk";
+    stream_settings.buffer_size = write_buffer_size;
+    delete_existing_file(stream_settings.filename, delete_existing);
+
+    //kb.attach_streamer(std::move(stream_settings), kb, 100);
+    //Todo: above is from the doc - below is from the tests
+    kb.attach_streamer(madara::utility::mk_unique<
+      madara::knowledge::CheckpointStreamer>(stream_settings, kb));
+  }
+
   // Iterate through all topics in the bagfile
   std::cout << "Converting...\n";
+  float progress;
+  int message_index = 0;
+  int progress_bar_width = 70;
   for (const rosbag::MessageInstance m: view)
   {
     std::string topic = m.getTopic ();
@@ -331,12 +480,20 @@ int main (int argc, char ** argv)
     }
     parser.parse_message (m, container_name);
 
+
     //kb.print ();
     std::stringstream id_ss;
     id_ss << std::setw (id_digit_count) << std::setfill ('0') <<
       checkpoint_id;
     std::string id_str = id_ss.str ();
-    settings.filename = checkpoint_prefix + "_" + id_str + ".kb";
+    if (same_file)
+    {
+      settings.filename = checkpoint_prefix + "_continuous";
+    }
+    else
+    {
+      settings.filename = checkpoint_prefix + "_" + id_str;
+    }
 
     uint64_t stamp = time.sec;
     stamp = stamp * 1000000000 + time.nsec;
@@ -347,7 +504,6 @@ int main (int argc, char ** argv)
       // this is the first message
       settings.initial_timestamp = settings.last_timestamp;
     }
-    settings.last_lamport_clock += 1;
 
     // Save checkpoint
     int ret = 0;
@@ -365,24 +521,64 @@ int main (int argc, char ** argv)
       last_checkpoint_timestamp = stamp;
       checkpoint_id++;
     }
+    
     // Check if the checkpoint was written correctly
     if ( ret == -1 )
     {
       std::cout << "Failed to write " << settings.filename << "!" << std::endl;
       exit(-1);
     }
+    settings.last_lamport_clock += 1;
+
+    // Printing the progress bar
+    // See https://stackoverflow.com/questions/14539867/how-to-display-a-progress-indicator-in-pure-c-c-cout-printf
+    message_index++;
+    progress = message_index / float(view.size ());
+    std::cout << "[";
+    int pos = progress_bar_width * progress;
+    for (int i = 0; i < progress_bar_width; ++i) {
+        if (i < pos)
+        {
+          std::cout << "=";
+        }
+        else if (i == pos)
+        {
+          std::cout << ">";
+        }
+        else
+        {
+          std::cout << " ";
+        }
+    }
+    std::cout << "] " << int(progress * 100.0) << " % " << message_index << "/"
+      << view.size() << "\r";
+    std::cout.flush();
   }
+  std::cout << std::endl << "done" << std::endl;
   
-  // Storing stats in the manifest knowledge
-  manifest.set ("last_timestamp", (Integer) settings.last_timestamp);
-  manifest.set ("initial_timestamp", (Integer) settings.initial_timestamp);
-  manifest.set ("duration_ns", (Integer)
-    ( settings.last_timestamp - settings.initial_timestamp));
-  manifest.set ("last_lamport_clock", (Integer) settings.last_lamport_clock-1);
-  manifest.set ("initial_lamport_clock",
-    (Integer) settings.initial_lamport_clock);
-  manifest.set ("last_checkpoint_id", checkpoint_id-1);
-  manifest.save_as_karl(checkpoint_prefix + "_manifest.kb");
+  if (manifest_file != "")
+  {
+    // Storing stats in the manifest knowledge
+    manifest.set ("last_timestamp", (Integer) settings.last_timestamp);
+    manifest.set ("initial_timestamp", (Integer) settings.initial_timestamp);
+    manifest.set ("last_lamport_clock", (Integer) settings.last_lamport_clock-1);
+    manifest.set ("initial_lamport_clock",
+      (Integer) settings.initial_lamport_clock);
+    manifest.set ("last_checkpoint_id", checkpoint_id-1);
+
+    // ROSBAG infos
+    manifest.set ("name", bag.getFileName());
+    ros::Time begin_time = view.getBeginTime ();
+    ros::Time end_time = view.getEndTime ();
+    manifest.set ("date", begin_time.toNSec ());
+    manifest.set ("duration", (end_time - begin_time).toNSec ());
+    if (save_as_stream)
+    {
+      manifest.set ("size", 
+        boost::filesystem::file_size(stream_settings.filename));
+    }
+    manifest.save_as_karl (manifest_file + ".mf");
+  }
 }
 #endif
 
@@ -395,39 +591,46 @@ int main (int argc, char ** argv)
 int save_checkpoint (knowledge::KnowledgeBase * knowledge,
     knowledge::CheckpointSettings * settings, std::string meta_prefix)
 {
-  /*knowledge->set (meta_prefix + ".originator",
-        settings->originator);
-  knowledge->set (meta_prefix + ".version",
-  settings->version);
-  knowledge->set (meta_prefix + ".current_timestamp",
-    (Integer) time (NULL));*/
-  knowledge->set (meta_prefix + ".last_timestamp",
-    (Integer) settings->last_timestamp);
-  knowledge->set (meta_prefix + ".initial_timestamp",
-    (Integer) settings->initial_timestamp);
-  knowledge->set (meta_prefix + ".last_lamport_clock",
-    (Integer) settings->last_lamport_clock);
-  knowledge->set (meta_prefix + ".initial_lamport_clock",
-    (Integer) settings->initial_lamport_clock);
+  if ( store_metadata )
+  {
+    knowledge->set (meta_prefix + ".last_timestamp",
+      (Integer) settings->last_timestamp);
+    knowledge->set (meta_prefix + ".initial_timestamp",
+      (Integer) settings->initial_timestamp);
+    knowledge->set (meta_prefix + ".last_lamport_clock",
+      (Integer) settings->last_lamport_clock);
+    knowledge->set (meta_prefix + ".initial_lamport_clock",
+      (Integer) settings->initial_lamport_clock);
+  }
 
   int ret = 0;
+  std::string filename = settings->filename;
   if ( save_as_karl )
   {
+    settings->filename = filename + ".mf";
+    delete_existing_file(settings->filename, delete_existing);
     ret = knowledge->save_as_karl (*settings);
   }
-  else if ( save_as_json )
+  
+  if ( save_as_json )
   {
+    settings->filename = filename + ".json";
+    delete_existing_file(settings->filename, delete_existing);
     ret = knowledge->save_as_json (*settings);
   }
-  else
+  
+  if ( save_as_binary )
   {
-    if ( differential_checkpoints == true )
+    settings->filename = filename + ".kb";
+    delete_existing_file(settings->filename, delete_existing);
+
+    if ( differential_checkpoints == true)
     {
       ret = knowledge->save_checkpoint (*settings);
     }
     else
     {
-      ret= knowledge->save_context (*settings);
+      ret = knowledge->save_context (*settings);
     }
   }
   return ret;
@@ -459,4 +662,16 @@ std::string get_agent_var_prefix (std::string ros_topic_name)
   }
 }
 
+
+void delete_existing_file(std::string path, bool delete_existing)
+{
+  if (!delete_existing)
+  {
+    return;
+  }
+  if (boost::filesystem::is_regular_file(path))
+  {
+    boost::filesystem::remove(path);
+  }
+}
 

@@ -2185,6 +2185,7 @@ containers::${new_container}::modify (void)
 
   if (scalar @new_algorithm > 0 or scalar @new_platform > 0
       or scalar @new_thread > 0 or scalar @new_transport > 0
+      or scalar @containers > 0
       or scalar @new_platform_thread > 0
       or scalar @new_receive_filters > 0
       or scalar @new_send_filters > 0)
@@ -2212,7 +2213,7 @@ containers::${new_container}::modify (void)
       close project_file;
     }
   
-    if (not -f "$path/using_boost.mpb")
+    if (not -f "$path/using_boost.mpb" or not -f "$path/using_capnp.mpb")
     {
       my $gamsroot = $ENV{GAMS_ROOT};
       
@@ -2221,10 +2222,9 @@ containers::${new_container}::modify (void)
         print ("  Copying base projects from $gamsroot to $path...\n");
       }
       
-      copy "$gamsroot/using_vrep.mpb", "$path/";
-      copy "$gamsroot/using_madara.mpb", "$path/";
-      copy "$gamsroot/using_gams.mpb", "$path/";
-      copy "$gamsroot/using_boost.mpb", "$path/";
+      copy "$script_dir/common/using_vrep.mpb", "$path/";
+      copy "$script_dir/common/using_boost.mpb", "$path/";
+      copy "$script_dir/common/using_capnp.mpb", "$path/";
     }
   
     foreach my $new_alg (@new_algorithm)
@@ -4925,6 +4925,29 @@ int main (int argc, char ** argv)
   if (not -f "$path/doxygen_help_gen.mpb")
   {
     copy "$script_dir/common/doxygen_help_gen.mpb", "$path/";
+  }
+
+  if (not -f "$path/using_boost.mpb")
+  {
+    copy "$script_dir/common/using_madara.mpb", "$path/";
+    copy "$script_dir/common/using_boost.mpb", "$path/";
+  }
+
+  if (not -f "$path/using_capnp.mpb")
+  {
+    # the directory needs the new using_madara and using_capnp
+    copy "$script_dir/common/using_capnp.mpb", "$path/";
+    copy "$script_dir/common/using_madara.mpb", "$path/";
+  }
+
+  if (not -f "$path/using_gams.mpb")
+  {
+    copy "$script_dir/common/using_gams.mpb", "$path/";
+  }
+
+  if (not -f "$path/using_madara.mpb")
+  {
+    copy "$script_dir/common/using_madara.mpb", "$path/";
   }
 
   if (not -f "$path/VERSION.txt")

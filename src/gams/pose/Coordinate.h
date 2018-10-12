@@ -126,13 +126,19 @@ struct default_unit_traits
     Eigen::Vector3d vec_;
 
   public:
-    storage_mixin() = default;
+    storage_mixin()
+      : vec_(0, 0, 0) {}
 
     storage_mixin(double x, double y)
       : vec_(x, y, 0) {}
 
     storage_mixin(double x, double y, double z)
       : vec_(x, y, z) {}
+
+    template<typename T, size_t N,
+      typename std::enable_if<std::is_floating_point<T>::value, int>::type = 0>
+    storage_mixin(T (&a)[N])
+      : vec_(N>0 ? a[0] : 0, N>1 ? a[1] : 0, N>2 ? a[2] : 0) {}
 
     explicit storage_mixin(const Eigen::Vector3d &vec) : vec_(vec) {}
 
@@ -195,6 +201,14 @@ struct default_rotational_unit_traits : default_unit_traits
       : Base(units.to_radians(rx),
              units.to_radians(ry),
              units.to_radians(rz)) {}
+
+    template<typename T, typename Units, size_t N,
+      typename std::enable_if<std::is_floating_point<T>::value, int>::type = 0>
+    storage_mixin(T (&a)[N], Units units)
+      : Base(
+          N>0 ? units.to_radians(a[0]) : 0,
+          N>1 ? units.to_radians(a[1]) : 0,
+          N>2 ? units.to_radians(a[2]) : 0) {}
 
   public:
     /**
@@ -392,6 +406,28 @@ struct basic_rotational_mixin : common_rotational_mixin<Derived>
   {
     return Derived(into_quat().slerp(scale, other.into_quat()));
   }
+
+  template<typename Other>
+  auto slerp(const Other &other, double scale) ->
+    typename std::decay<decltype(other.into_quat(),
+        std::declval<Derived>())>::type
+  {
+    return slerp(scale, other);
+  }
+
+  template<typename Other>
+  auto slerp_this(double scale, const Other &other) ->
+    decltype(other.into_quat(), void())
+  {
+    self() = Derived(into_quat().slerp(scale, other.into_quat()));
+  }
+
+  template<typename Other>
+  auto slerp_this(const Other &other, double scale) ->
+    decltype(other.into_quat(), void())
+  {
+    return slerp_this(scale, other);
+  }
 };
 
 template<>
@@ -569,7 +605,7 @@ public:
   template<typename ContainType>
   void to_array(ContainType &out) const
   {
-    for(int i = 0; i < size(); i++)
+    for(size_t i = 0; i < size(); i++)
     {
       out[i] = get(i);
     }
@@ -590,7 +626,7 @@ public:
   template<typename ContainType>
   void from_array(const ContainType &in)
   {
-    for(int i = 0; i < size(); i++)
+    for(size_t i = 0; i < size(); i++)
     {
       set(i, in[i]);
     }
@@ -881,47 +917,204 @@ inline auto operator-(const BasicVector<LDerived, LUnits> &lhs,
   return ret;
 }
 
-/// Generates comparison operators for coordinate types
-#define GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(op) \
-  template<typename LDerived, typename RDerived, typename Units> \
-  inline bool operator op ( \
-      const BasicVector<LDerived, Units> &lhs, \
-      const BasicVector<RDerived, Units> &rhs) \
-  { \
-    for (int i = 0; i < lhs.vec().size(); ++i) { \
-      if (!(lhs.vec()[i] op rhs.vec()[i])) { \
-        return false; \
-      } \
-    } \
-    return true; \
-  } \
- \
-  template<typename LDerived, typename RDerived, typename Units> \
-  inline bool operator op ( \
-      const Framed<BasicVector<LDerived, Units>> &lhs, \
-      const Framed<BasicVector<RDerived, Units>> &rhs) \
-  { \
-    return lhs.frame() op rhs.frame() && \
-      static_cast<const BasicVector<LDerived, Units> &>(lhs) op \
-      static_cast<const BasicVector<RDerived, Units> &>(rhs); \
-  } \
- \
-  template<typename LDerived, typename RDerived, typename Units> \
-  inline bool operator op ( \
-      const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs, \
-      const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs) \
-  { \
-    return lhs.time() op rhs.time() && \
-      static_cast<const Framed<BasicVector<LDerived, Units> &>>(lhs) op \
-      static_cast<const Framed<BasicVector<RDerived, Units> &>>(rhs); \
+/**
+ * Equality operator for coordinates.
+ *
+ * @return true if all corresponding values are equal.
+ **/
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator == (
+    const BasicVector<LDerived, Units> &lhs,
+    const BasicVector<RDerived, Units> &rhs)
+{
+  for (int i = 0; i < lhs.vec().size(); ++i) {
+    if (!(lhs.vec()[i] == rhs.vec()[i])) {
+      return false;
+    }
   }
+  return true;
+}
 
-GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(==)
-GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(!=)
-GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(<)
-GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(<=)
-GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(>)
-GAMS_POSE_MAKE_COORDINATE_COMPARE_OPS(>=)
+/**
+ * Equality operator for Framed coordinates.
+ *
+ * @return true if frames and all corresponding values are equal.
+ **/
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator == (
+    const Framed<BasicVector<LDerived, Units>> &lhs,
+    const Framed<BasicVector<RDerived, Units>> &rhs)
+{
+  return lhs.frame() == rhs.frame() &&
+    static_cast<const BasicVector<LDerived, Units> &>(lhs) ==
+    static_cast<const BasicVector<RDerived, Units> &>(rhs);
+}
+
+/**
+ * Equality operator for Framed and Stamped coordinates.
+ *
+ * @return true if timestamps, frames and all corresponding values are equal.
+ **/
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator == (
+    const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs,
+    const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs)
+{
+  return lhs.time() == rhs.time() &&
+    static_cast<const Framed<BasicVector<LDerived, Units> &>>(lhs) ==
+    static_cast<const Framed<BasicVector<RDerived, Units> &>>(rhs);
+}
+
+/**
+ * Inequality operator for coordinates.
+ *
+ * @return !(lhs == rhs)
+ **/
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator != (
+    const BasicVector<LDerived, Units> &lhs,
+    const BasicVector<RDerived, Units> &rhs)
+{
+  return !(lhs == rhs);
+}
+
+/**
+ * Inequality operator for Framed coordinates.
+ *
+ * @return !(lhs == rhs)
+ **/
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator != (
+    const Framed<BasicVector<LDerived, Units>> &lhs,
+    const Framed<BasicVector<RDerived, Units>> &rhs)
+{
+  return !(lhs == rhs);
+}
+
+/**
+ * Inequality operator for Framed and Stamped coordinates.
+ *
+ * @return !(lhs == rhs)
+ **/
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator != (
+    const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs,
+    const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs)
+{
+  return !(lhs == rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator < (
+    const BasicVector<LDerived, Units> &lhs,
+    const BasicVector<RDerived, Units> &rhs)
+{
+  for (int i = 0; i < lhs.vec().size(); ++i) {
+    const auto &l = lhs.vec()[i];
+    const auto &r = rhs.vec()[i];
+
+    if (l > r) {
+      return false;
+    }
+
+    if (l < r) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator < (
+    const Framed<BasicVector<LDerived, Units>> &lhs,
+    const Framed<BasicVector<RDerived, Units>> &rhs)
+{
+  return &lhs.frame() < &rhs.frame() || (lhs.frame() == rhs.frame() &&
+    static_cast<const BasicVector<LDerived, Units> &>(lhs) ==
+    static_cast<const BasicVector<RDerived, Units> &>(rhs));
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator < (
+    const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs,
+    const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs)
+{
+  return lhs.time() < rhs.time() || (lhs.time() == rhs.time() &&
+    static_cast<const Framed<BasicVector<LDerived, Units> &>>(lhs) ==
+    static_cast<const Framed<BasicVector<RDerived, Units> &>>(rhs));
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator <= (
+    const BasicVector<LDerived, Units> &lhs,
+    const BasicVector<RDerived, Units> &rhs)
+{
+  return (lhs == rhs) || (lhs < rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator <= (
+    const Framed<BasicVector<LDerived, Units>> &lhs,
+    const Framed<BasicVector<RDerived, Units>> &rhs)
+{
+  return (lhs == rhs) || (lhs < rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator <= (
+    const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs,
+    const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs)
+{
+  return (lhs == rhs) || (lhs < rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator >= (
+    const BasicVector<LDerived, Units> &lhs,
+    const BasicVector<RDerived, Units> &rhs)
+{
+  return !(lhs < rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator >= (
+    const Framed<BasicVector<LDerived, Units>> &lhs,
+    const Framed<BasicVector<RDerived, Units>> &rhs)
+{
+  return !(lhs < rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator >= (
+    const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs,
+    const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs)
+{
+  return !(lhs < rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator > (
+    const BasicVector<LDerived, Units> &lhs,
+    const BasicVector<RDerived, Units> &rhs)
+{
+  return !(lhs <= rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator > (
+    const Framed<BasicVector<LDerived, Units>> &lhs,
+    const Framed<BasicVector<RDerived, Units>> &rhs)
+{
+  return !(lhs <= rhs);
+}
+
+template<typename LDerived, typename RDerived, typename Units>
+inline bool operator > (
+    const Stamped<Framed<BasicVector<LDerived, Units>>> &lhs,
+    const Stamped<Framed<BasicVector<RDerived, Units>>> &rhs)
+{
+  return !(lhs <= rhs);
+}
 
 /// Creates the three variants for each coordinate type:
 /// {Coordinate}Vector: just the coordinate values alone
@@ -1017,12 +1210,12 @@ class AngularAccelerations;
 GAMS_POSE_MAKE_COORDINATE_TYPE(Position, units::absolute<units::length>);
 GAMS_POSE_MAKE_COORDINATE_TYPE(Displacement, units::length);
 GAMS_POSE_MAKE_COORDINATE_TYPE(Velocity, units::velocity);
-GAMS_POSE_MAKE_COORDINATE_TYPE(Accleration, units::acceleration);
+GAMS_POSE_MAKE_COORDINATE_TYPE(Acceleration, units::acceleration);
 
 GAMS_POSE_MAKE_COORDINATE_TYPE(Orientation, units::absolute<units::plane_angle>);
 GAMS_POSE_MAKE_COORDINATE_TYPE(Rotation, units::plane_angle);
 GAMS_POSE_MAKE_COORDINATE_TYPE(AngularVelocity, units::angular_velocity);
-GAMS_POSE_MAKE_COORDINATE_TYPE(AngularAccleration, units::angular_acceleration);
+GAMS_POSE_MAKE_COORDINATE_TYPE(AngularAcceleration, units::angular_acceleration);
 
 template<>
 struct fixed_into_free<PositionVector>

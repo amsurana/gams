@@ -58,8 +58,6 @@
 
 #include "gams/pose/Euler.h"
 
-#include <ace/Guard_T.h>
-
 typedef MADARA_GUARD_TYPE Guard;
 
 #define VREP_LOCK_MUTEX(mutex) \
@@ -545,7 +543,7 @@ gams::platforms::VREPBase::move (const pose::Position & target,
   if (get_ready ())
   {
     // update variables
-    BasePlatform::move (target);
+    BasePlatform::move (target, bounds);
 
     madara_logger_ptr_log (gams::loggers::global_logger.get (),
       gams::loggers::LOG_TRACE,
@@ -618,7 +616,7 @@ gams::platforms::VREPBase::orient (const pose::Orientation & target,
   if (get_ready ())
   {
     // update variables
-    BasePlatform::orient (target);
+    BasePlatform::orient (target, bounds);
 
     madara_logger_ptr_log (gams::loggers::global_logger.get (),
       gams::loggers::LOG_TRACE,

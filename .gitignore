@@ -4,6 +4,7 @@
 *.o
 *.d
 Makefile
+last_build.lst
 *algorithm*.txt
 *.csv
 .depend.*
@@ -16,6 +17,8 @@ lib*
 *.bag
 *.vcxproj
 *.vcxproj.filters
+.vscode
+capnproto/
 
 gams.VC.db
 gams.sdf
@@ -55,4 +58,16 @@ eigen/
 target/
 .project
 .settings
+
+blacklist
+whitelist
+*.bag
+src/gams/types/*.c++
+src/gams/types/*.h
+!src/gams/types/Datatypes.h
+*.bin
+*.tar.gz
+vrep/
+capnproto/
+MPC/
 

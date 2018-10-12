@@ -31,7 +31,6 @@ ANDROID_TOOLS_ZIP="sdk-tools-linux-3859397.zip"
 ANDROID_TOOLS_DIR="$ANDROID_SDK_DIR/tools"
 DEMO_PRJ_DIR=`pwd`"/demo-prj"
 
-JAR_LIBS_DIR="$DEMO_PRJ_DIR/app/libs"
 JNI_LIBS_DIR_ARCH="$DEMO_PRJ_DIR/app/src/main/jniLibs/$ANDROID_ARCH"
 
 
@@ -76,12 +75,15 @@ fi
 #Copy all required JNI files into respective project directory.
 
 MADARA_LIB=$MADARA_ROOT/lib/libMADARA.so
-MADARA_JAR=$MADARA_ROOT/lib/madara.jar
 GAMS_LIB=$GAMS_ROOT/lib/libGAMS.so
-GAMS_JAR=$GAMS_ROOT/lib/gams.jar
 
-if [ ! -f $MADARA_LIB ]  || [ ! -f $GAMS_LIB ] || [ ! -f $MADARA_JAR ] || [ ! -f $GAMS_JAR ]; then 
-   echo "Looks like not all required libraries are available. Please ensure BOOST, MADARA, GAMS libraries are available";
+if [ ! -f $MADARA_LIB ]; then 
+   echo "MADARA library not found. Please check";
+   exit 1;
+fi
+
+if [ ! -f $GAMS_LIB ]; then 
+   echo "GAMS library not found. Please check";
    exit 1;
 fi
 
@@ -92,6 +94,27 @@ mkdir -p $JNI_LIBS_DIR_ARCH
 cp $MADARA_LIB $JNI_LIBS_DIR_ARCH
 cp $GAMS_LIB $JNI_LIBS_DIR_ARCH
 
+#Copy ZMQ so file if needed.
+if [ $ZMQ -eq 1 ]; then
+   
+  if [ ! -f $ZMQ_ROOT/lib/libzmq.so ]; then
+    echo "libzmq.so file not found in path. Check if ZMQ for Android is built properly"
+    exit 1;
+  fi
+  
+  cp $ZMQ_ROOT/lib/libzmq.so $JNI_LIBS_DIR_ARCH
+fi
+
+#Copy CAPNPRO files
+
+if [ ! -f $CAPNP_ROOT/c++/.libs/libcapnp-json-*.so ]; then
+    echo "CAPNP libraries not found in path. Check if the library for Android is built properly"
+    exit 1;
+  fi
+
+
+cp $CAPNP_ROOT/c++/.libs/libcapnp-*.so $JNI_LIBS_DIR_ARCH
+cp $CAPNP_ROOT/c++/.libs/libkj-*.so $JNI_LIBS_DIR_ARCH
 
 case $ANDROID_ARCH in
     arm32|arm|armeabi|armeabi-v7a)
@@ -111,12 +134,6 @@ case $ANDROID_ARCH in
       exit 1
       ;;
 esac
-
-#Copy Java files
-mkdir -p $JAR_LIBS_DIR
-cp $MADARA_JAR $JAR_LIBS_DIR
-cp $GAMS_JAR $JAR_LIBS_DIR
-
 
 #Build and compile the APK
 cd $DEMO_PRJ_DIR

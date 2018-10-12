@@ -10,12 +10,12 @@
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  * this list of conditions and the following disclaimer in the documentation
  * and/or other materials provided with the distribution.
- * 
+ *
  * 3. The names "Carnegie Mellon University," "SEI" and/or
  * "Software Engineering Institute" shall not be used to endorse or promote
  * products derived from this software without prior written permission. For
  * written permission, please contact permission@sei.cmu.edu.
- * 
+ *
  * 4. Products derived from this software may not be called "SEI" nor may "SEI"
  * appear in their names without prior written permission of
  * permission@sei.cmu.edu.
@@ -30,7 +30,7 @@
  * recommendations expressed in this material are those of the author(s) and
  * do not necessarily reflect the views of the United States Department of
  * Defense.
- * 
+ *
  * NO WARRANTY. THIS CARNEGIE MELLON UNIVERSITY AND SOFTWARE ENGINEERING
  * INSTITUTE MATERIAL IS FURNISHED ON AN "AS-IS" BASIS. CARNEGIE MELLON
  * UNIVERSITY MAKES NO WARRANTIES OF ANY KIND, EITHER EXPRESSED OR IMPLIED,
@@ -38,16 +38,18 @@
  * PURPOSE OR MERCHANTABILITY, EXCLUSIVITY, OR RESULTS OBTAINED FROM USE OF THE
  * MATERIAL. CARNEGIE MELLON UNIVERSITY DOES NOT MAKE ANY WARRANTY OF ANY KIND
  * WITH RESPECT TO FREEDOM FROM PATENT, TRADEMARK, OR COPYRIGHT INFRINGEMENT.
- * 
+ *
  * This material has been approved for public release and unlimited
  * distribution.
- * 
+ *
  * @author James Edmondson <jedmondson@gmail.com>
  *********************************************************************/
 package ai.gams.platforms;
 
+import ai.gams.exceptions.GamsDeadObjectException;
 import ai.gams.utility.Axes;
 import ai.gams.utility.Position;
+import ai.madara.exceptions.MadaraDeadObjectException;
 
 /**
  * Interface for defining a platform to be used by GAMS. Care must be taken
@@ -61,40 +63,40 @@ public interface PlatformInterface
    * a non-blocking call.
    * @return   status information (@see PlatformStatusEnum)
    **/
-  public int analyze ();
-  
+  public int analyze () throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Returns the accuracy in meters
    * @return the accuracy of the platform
    **/
-  public double getAccuracy ();
-    
+  public double getAccuracy () throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Returns the position accuracy in meters
    * @return position accuracy
    **/
-  public double getPositionAccuracy ();
+  public double getPositionAccuracy () throws MadaraDeadObjectException, GamsDeadObjectException;
 
   /**
-   * Returns the current position 
+   * Returns the current position
    * @return the current position of the device/agent
    **/
-  public Position getPosition ();
-  
+  public Position getPosition () throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Returns to the home location. This should be
    * a non-blocking call.
    * @return   status information (@see PlatformReturnStatusEnum)
    **/
-  public int home ();
-  
+  public int home () throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Requests the platform to land. This should be
    * a non-blocking call.
    * @return   status information (@see PlatformReturnStatusEnum)
    **/
-  public int land ();
-  
+  public int land () throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Initializes a move to the target position. This should be
    * a non-blocking call.
@@ -103,27 +105,29 @@ public interface PlatformInterface
    *                   and target position that terminates the move.
    * @return  status information (@see PlatformReturnStatusEnum)
    **/
-  public int move (Position target, double proximity);
-   
+  public int move (Position target, double proximity) throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Initializes a rotate along x, y, z axes. This should be
    * a non-blocking call and implements an extrinsic rotation.
    * @param   axes       parameters for rotation along x, y, z axes
    * @return  status information (@see PlatformReturnStatusEnum)
    **/
-  public int rotate (Axes axes);
-   
+  public int rotate (Axes axes) throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Get sensor radius
    * @return minimum radius of all available sensors for this platform
+ * @throws MadaraDeadObjectException
    */
-  public double getMinSensorRange ();
+  public double getMinSensorRange () throws GamsDeadObjectException, MadaraDeadObjectException;
 
   /**
    * Gets the movement speed
    * @return movement speed
+ * @throws MadaraDeadObjectException
    **/
-  public double getMoveSpeed ();
+  public double getMoveSpeed () throws GamsDeadObjectException, MadaraDeadObjectException;
 
   /**
    * Gets the unique id of the platform. This should be an alphanumeric
@@ -143,25 +147,32 @@ public interface PlatformInterface
    * Gets results from the platform's sensors. This should be
    * a non-blocking call.
    * @return  the status of the platform, @see PlatformStatusEnum
+ * @throws GamsDeadObjectException
+ * @throws MadaraDeadObjectException
    **/
-  public int sense ();
-  
+  public int sense () throws GamsDeadObjectException, MadaraDeadObjectException;
+
   /**
    * Sets move speed
    * @param speed new speed in meters/second
+ * @throws MadaraDeadObjectException
    **/
-  public void setMoveSpeed (double speed);
-      
+  public void setMoveSpeed (double speed) throws MadaraDeadObjectException;
+
   /**
    * Takes off. This should be
    * a non-blocking call.
    * @return   status information (@see PlatformReturnStatusEnum)
+ * @throws GamsDeadObjectException
+ * @throws MadaraDeadObjectException
    **/
-  public int takeoff ();
-  
+  public int takeoff () throws MadaraDeadObjectException, GamsDeadObjectException;
+
   /**
    * Stops moving
+ * @throws GamsDeadObjectException
+ * @throws MadaraDeadObjectException
    **/
-  public void stopMove ();
+  public void stopMove () throws MadaraDeadObjectException, GamsDeadObjectException;
 }
 
